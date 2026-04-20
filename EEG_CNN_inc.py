@@ -41,7 +41,7 @@ def morlet_cwt(x, widths, w=6.0):
         wavelet = np.exp(1j*w*t/width) * np.exp(-(t/width)**2/2)
         conv = np.convolve(x, wavelet, mode="same")
         out[i] = np.abs(conv)
-    return out
+    return out #(周波数数, 時間点数)
 
 # =========================
 # データ抽出 p.s データ構造に合わせて修正必要
@@ -100,10 +100,10 @@ def extract_subject(ttlfile, eegfile, errpfile):
         else:
             Cor_trials.append(sig)
 
-    return np.array(Err_trials), np.array(Cor_trials)
+    return np.array(Err_trials), np.array(Cor_trials) #(試行数, チャネル数, 時間点数)
 
 # =========================
-# θ帯域　p.s 全域への変更視野
+# θ帯域　
 # =========================
 def make_theta_dataset(trials):
     freq_mask = (FREQ >= 4) & (FREQ <= 7)
@@ -113,15 +113,15 @@ def make_theta_dataset(trials):
         ch_tf = []
         for ch_signal in trial:
             tf = morlet_cwt(ch_signal, WIDTHS, w=W)
-            tf -= tf[:, 500:1000].mean(axis=1)[:, None]
+            tf -= tf[:, 500:1000].mean(axis=1)[:, None] # ベースライン補正
             tf = tf[freq_mask, :]
-            tf = tf[:, 1200:1701]
+            tf = tf[:, 1200:1701] # θ帯域の時間範囲（-200ms～1000ms）に切り出し
             ch_tf.append(tf)
 
         ch_tf = np.array(ch_tf)  # (ch, freq, time)
         tf_list.append(ch_tf)
 
-    return np.array(tf_list)
+    return np.array(tf_list) # (試行数, チャネル数, θ帯域の周波数数, 時間点数)
 
 # ==========================
 # subject data extraction
@@ -130,16 +130,16 @@ def load_subject_data(subj_id, n_train=10, n_test=10, replace=True):
     print(f"\n=== Subject {subj_id} ===")
 
     root = tk.Tk()
-    root.withdraw()
+    root.withdraw() 
 
-    # ===== ファイル選択 =====
+    # ===== ファイル選択 =====#仮想環境上ではファイルダイアログが機能しないため、後で直接パス指定に変更予定
     ttlfile  = filedialog.askopenfilename(title=f"Sub{subj_id} TimeEvent CSV")
     eegfile  = filedialog.askopenfilename(title=f"Sub{subj_id} EEG file")
     errpfile = filedialog.askopenfilename(title=f"Sub{subj_id} Direction_data.csv")
 
     # ===== データ抽出 =====
     Err, Cor = extract_subject(ttlfile, eegfile, errpfile)
-    Err_tf = make_theta_dataset(Err)
+    Err_tf = make_theta_dataset(Err) 
     Cor_tf = make_theta_dataset(Cor)
 
     # ===== データチェック =====
@@ -168,7 +168,7 @@ def load_subject_data(subj_id, n_train=10, n_test=10, replace=True):
     y_test = np.hstack([np.ones(n_test), np.zeros(n_test)])
 
 
-    return X_train, y_train, X_test, y_test
+    return X_train, y_train, X_test, y_test 
 # ==========================
 # model definition
 # ==========================
@@ -251,7 +251,7 @@ for subj in range(1, N_SUBJECTS+1):
 
     print(f"Sub{subj} Accuracy:", acc)
 
-    # ===== 保存 =====
+    # ===== 保存 ===== 今後の実装：学習に過去モデルを利用するため、サンプルデータを保存
     torch.save({
         "model": model.state_dict(),
         "channels": CHANNELS

@@ -26,7 +26,8 @@ EPOCH_LEN = PRE_MS + POST_MS + 1
 W = 6.0
 FREQ = np.linspace(1, 100, 100)
 WIDTHS = W * FS / (2 * np.pi * FREQ)
-model_path = "incremental_model.pth"
+MODEL_PATH = "incremental_model.pth"
+EPOCH = 40
 
 # =========================
 # Morlet
@@ -182,20 +183,20 @@ class EEGCNN(nn.Module):
         x = self.pool2(x)
         x = x.view(x.size(0), -1)
         x = torch.relu(self.fc1(x))
-        x = torch.sigmoid(self.fc2(x))#ロジスティックに変更予定
+        x = self.fc2(x)#ロジスティックに変更
         return x.squeeze()
 # ==========================
 # model incremental
 # ==========================
 model = EEGCNN()
-if os.path.exists(model_path):
-    model.load_state_dict(torch.load(model_path))
+if os.path.exists(MODEL_PATH):
+    model.load_state_dict(torch.load(MODEL_PATH))
     lr = 0.0005   
 else:
     lr = 0.001  
 
 optimizer = optim.Adam(model.parameters(), lr=lr)
-criterion = nn.BCELoss()#ロジスティックに変更予定
+criterion = nn.BCEWithLogitsLoss()#ロジスティックに変更
 # ==========================
 # main
 # ==========================
@@ -214,7 +215,7 @@ for subj in range(1, N_SUBJECTS+1):
     y_test = torch.tensor(y_test, dtype=torch.float32)
 
     # ===== 学習 =====
-    for epoch in range(20):
+    for epoch in range(EPOCH):
         optimizer.zero_grad()
         out = model(x_train)
         loss = criterion(out, y_train)
@@ -223,12 +224,12 @@ for subj in range(1, N_SUBJECTS+1):
 
     # ===== 評価 =====
     with torch.no_grad():
-        pred = model(x_test)
+        pred = torch.sigmoid(model(x_test))#シグモイドで固定
         pred = (pred > 0.5).float()
         acc = accuracy_score(y_test.numpy(), pred.numpy())
 
     print(f"Sub{subj} Accuracy:", acc)
 
-    # ===== 保存（これがincrementalの核心）=====
-    torch.save(model.state_dict(), model_path)
+    # ===== 保存 =====
+    torch.save(model.state_dict(), MODEL_PATH)
 

@@ -136,8 +136,8 @@ def load_subject_data(subj_id, n_train=10, n_test=10, replace=True):
     Cor_tf = make_theta_dataset(Cor)
 
     # ===== データチェック =====
-    if len(Err_tf) == 0 or len(Cor_tf) == 0:
-        print("データ不足")
+    if len(Err_tf) < n_train or len(Cor_tf) < n_train:
+        print("missing data for training. skipping subject.")
         return None
 
     # ===== ランダム抽出（重複あり/なし）=====
@@ -160,11 +160,6 @@ def load_subject_data(subj_id, n_train=10, n_test=10, replace=True):
     X_test = np.vstack([Err_test, Cor_test])
     y_test = np.hstack([np.ones(n_test), np.zeros(n_test)])
 
-    x_train = torch.tensor(x_train, dtype=torch.float32).unsqueeze(1)
-    y_train = torch.tensor(y_train, dtype=torch.float32)
-
-    x_test = torch.tensor(x_test, dtype=torch.float32).unsqueeze(1)
-    y_test = torch.tensor(y_test, dtype=torch.float32)
 
     return X_train, y_train, X_test, y_test
 # ==========================
@@ -205,32 +200,35 @@ criterion = nn.BCELoss()#ロジスティックに変更予定
 # main
 # ==========================
 
-
-
 for subj in range(1, N_SUBJECTS+1):
-    x_train, y_train, x_test, y_test = load_subject_data(subj, n_train=10, n_test=10, replace=True)
-    
+    data = load_subject_data(subj, n_train=10, n_test=10, replace=True)
+    if data is None:
+        continue
 
-# 学習
-for epoch in range(20):
-    optimizer.zero_grad()
-    out = model(x_train)
-    loss = criterion(out, y_train)
-    loss.backward()
-    optimizer.step()
+    x_train, y_train, x_test, y_test = data
 
-with torch.no_grad():
-    pred_raw = model(x_test)
-    print(pred_raw[:10])
-# 評価
-with torch.no_grad():
-    pred = model(x_test)
-    pred = (pred > 0.5).float() #確率50%以上
-    acc = accuracy_score(y_test.numpy(), pred.numpy())
+    x_train = torch.tensor(x_train, dtype=torch.float32).unsqueeze(1)
+    y_train = torch.tensor(y_train, dtype=torch.float32)
 
-print("Accuracy:", acc)
-# 結果表示
+    x_test = torch.tensor(x_test, dtype=torch.float32).unsqueeze(1)
+    y_test = torch.tensor(y_test, dtype=torch.float32)
 
-# 結果保存
+    # ===== 学習 =====
+    for epoch in range(20):
+        optimizer.zero_grad()
+        out = model(x_train)
+        loss = criterion(out, y_train)
+        loss.backward()
+        optimizer.step()
 
-torch.save(model.state_dict(), model_path)
+    # ===== 評価 =====
+    with torch.no_grad():
+        pred = model(x_test)
+        pred = (pred > 0.5).float()
+        acc = accuracy_score(y_test.numpy(), pred.numpy())
+
+    print(f"Sub{subj} Accuracy:", acc)
+
+    # ===== 保存（これがincrementalの核心）=====
+    torch.save(model.state_dict(), model_path)
+

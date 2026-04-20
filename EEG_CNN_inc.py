@@ -17,7 +17,8 @@ import os
 # 設定
 # =========================
 N_SUBJECTS = 1
-CHANNEL = "FCz"
+CHANNELS = ["FCz"] #複数チャネル対応
+ch_str = "_".join(sorted(CHANNELS))
 FS = 1000
 PRE_MS  = 1000
 POST_MS = 2000
@@ -26,7 +27,7 @@ EPOCH_LEN = PRE_MS + POST_MS + 1
 W = 6.0
 FREQ = np.linspace(1, 100, 100)
 WIDTHS = W * FS / (2 * np.pi * FREQ)
-MODEL_PATH = "incremental_model.pth"
+MODEL_PATH = f"incremental_model_{ch_str}.pth"
 EPOCH = 40
 
 # =========================
@@ -45,7 +46,7 @@ def morlet_cwt(x, widths, w=6.0):
 # =========================
 # データ抽出 p.s データ構造に合わせて修正必要
 # =========================
-def extract_subject_fcz(ttlfile, eegfile, errpfile):
+def extract_subject(ttlfile, eegfile, errpfile):
 
     data = pd.read_table(eegfile, index_col=0)
     data.index = data.index.astype(float).round().astype(int)
@@ -92,7 +93,7 @@ def extract_subject_fcz(ttlfile, eegfile, errpfile):
         if len(epoch) != EPOCH_LEN:
             continue
 
-        sig = epoch[CHANNEL].values
+        sig = epoch[CHANNELS].values.T
 
         if ErrP[i] == 1:
             Err_trials.append(sig)
@@ -108,12 +109,17 @@ def make_theta_dataset(trials):
     freq_mask = (FREQ >= 4) & (FREQ <= 7)
     tf_list = []
 
-    for x in trials:
-        tf = morlet_cwt(x, WIDTHS, w=W)
-        tf -= tf[:, 500:1000].mean(axis=1)[:, None]
-        tf = tf[freq_mask, :]
-        tf = tf[:, 1200:1701]
-        tf_list.append(tf)
+    for trial in trials:  # (ch, time)
+        ch_tf = []
+        for ch_signal in trial:
+            tf = morlet_cwt(ch_signal, WIDTHS, w=W)
+            tf -= tf[:, 500:1000].mean(axis=1)[:, None]
+            tf = tf[freq_mask, :]
+            tf = tf[:, 1200:1701]
+            ch_tf.append(tf)
+
+        ch_tf = np.array(ch_tf)  # (ch, freq, time)
+        tf_list.append(ch_tf)
 
     return np.array(tf_list)
 
@@ -132,7 +138,7 @@ def load_subject_data(subj_id, n_train=10, n_test=10, replace=True):
     errpfile = filedialog.askopenfilename(title=f"Sub{subj_id} Direction_data.csv")
 
     # ===== データ抽出 =====
-    Err, Cor = extract_subject_fcz(ttlfile, eegfile, errpfile)
+    Err, Cor = extract_subject(ttlfile, eegfile, errpfile)
     Err_tf = make_theta_dataset(Err)
     Cor_tf = make_theta_dataset(Cor)
 
@@ -167,13 +173,21 @@ def load_subject_data(subj_id, n_train=10, n_test=10, replace=True):
 # model definition
 # ==========================
 class EEGCNN(nn.Module):
-    def __init__(self):
+    def __init__(self, in_channels, freq_dim, time_dim):
         super().__init__()
-        self.conv1 = nn.Conv2d(1, 8, kernel_size=(3,15), padding=(1,7))
+
+        self.conv1 = nn.Conv2d(in_channels, 8, kernel_size=(3,15), padding=(1,7))
         self.pool1 = nn.MaxPool2d((1,2))
+
         self.conv2 = nn.Conv2d(8, 16, kernel_size=(3,7), padding=(1,3))
         self.pool2 = nn.MaxPool2d((1,2))
-        self.fc1 = nn.Linear(16*4*125, 32)
+
+        dummy = torch.zeros(1, in_channels, freq_dim, time_dim)
+        x = self.pool1(torch.relu(self.conv1(dummy)))
+        x = self.pool2(torch.relu(self.conv2(x)))
+        self.flatten_dim = x.view(1, -1).shape[1]
+
+        self.fc1 = nn.Linear(self.flatten_dim, 32)
         self.fc2 = nn.Linear(32,1)
 
     def forward(self,x):
@@ -183,36 +197,43 @@ class EEGCNN(nn.Module):
         x = self.pool2(x)
         x = x.view(x.size(0), -1)
         x = torch.relu(self.fc1(x))
-        x = self.fc2(x)#ロジスティックに変更
+        x = self.fc2(x)
         return x.squeeze()
-# ==========================
-# model incremental
-# ==========================
-model = EEGCNN()
-if os.path.exists(MODEL_PATH):
-    model.load_state_dict(torch.load(MODEL_PATH))
-    lr = 0.0005   
-else:
-    lr = 0.001  
 
-optimizer = optim.Adam(model.parameters(), lr=lr)
-criterion = nn.BCEWithLogitsLoss()#ロジスティックに変更
 # ==========================
 # main
 # ==========================
 
+model = None
 for subj in range(1, N_SUBJECTS+1):
     data = load_subject_data(subj, n_train=10, n_test=10, replace=True)
     if data is None:
         continue
-
+    
     x_train, y_train, x_test, y_test = data
-
-    x_train = torch.tensor(x_train, dtype=torch.float32).unsqueeze(1)
+    x_train = torch.tensor(x_train, dtype=torch.float32)
     y_train = torch.tensor(y_train, dtype=torch.float32)
 
-    x_test = torch.tensor(x_test, dtype=torch.float32).unsqueeze(1)
+    x_test = torch.tensor(x_test, dtype=torch.float32)
     y_test = torch.tensor(y_test, dtype=torch.float32)
+
+    in_channels = x_train.shape[1]
+    freq_dim = x_train.shape[2]
+    time_dim = x_train.shape[3]
+
+    if model is None:
+        model = EEGCNN(in_channels, freq_dim, time_dim)
+
+        if os.path.exists(MODEL_PATH):
+            checkpoint = torch.load(MODEL_PATH)
+            model.load_state_dict(checkpoint["model"])
+            lr = 0.0005
+        else:
+            lr = 0.001
+
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+        criterion = nn.BCEWithLogitsLoss()
+
 
     # ===== 学習 =====
     for epoch in range(EPOCH):
@@ -231,5 +252,8 @@ for subj in range(1, N_SUBJECTS+1):
     print(f"Sub{subj} Accuracy:", acc)
 
     # ===== 保存 =====
-    torch.save(model.state_dict(), MODEL_PATH)
+    torch.save({
+        "model": model.state_dict(),
+        "channels": CHANNELS
+    }, MODEL_PATH)
 

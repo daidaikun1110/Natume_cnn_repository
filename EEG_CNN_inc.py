@@ -136,7 +136,7 @@ def load_subject_data(subj_id, n_train=10, n_test=10, replace=True):
     Cor_tf = make_theta_dataset(Cor)
 
     # ===== データチェック =====
-    if len(Err_tf) == 10 or len(Cor_tf) == 10:
+    if len(Err_tf) == 0 or len(Cor_tf) == 0:
         print("データ不足")
         return None
 
@@ -159,6 +159,12 @@ def load_subject_data(subj_id, n_train=10, n_test=10, replace=True):
 
     X_test = np.vstack([Err_test, Cor_test])
     y_test = np.hstack([np.ones(n_test), np.zeros(n_test)])
+
+    x_train = torch.tensor(x_train, dtype=torch.float32).unsqueeze(1)
+    y_train = torch.tensor(y_train, dtype=torch.float32)
+
+    x_test = torch.tensor(x_test, dtype=torch.float32).unsqueeze(1)
+    y_test = torch.tensor(y_test, dtype=torch.float32)
 
     return X_train, y_train, X_test, y_test
 # ==========================
